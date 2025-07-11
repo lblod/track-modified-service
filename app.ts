@@ -1,5 +1,6 @@
 import { app, sparqlEscapeUri, sparqlEscapeDateTime } from 'mu';
 import { querySudo as query, updateSudo as update } from '@lblod/mu-auth-sudo';
+import { CronJob } from 'cron';
 
 import { ErrorRequestHandler, Request, Response } from 'express';
 import { Changeset } from './types';
@@ -59,7 +60,7 @@ async function handleChangedSubjects(subjects: string[]) {
 
   // WARNING personally i would never put the values statement in this query so far away from
   // its usage, but moving it inside the graph statement triggers a virtuoso error "no SPART_VARR_FIXED"
-  update(`
+  await update(`
     PREFIX dct: <http://purl.org/dc/terms/>
 
     DELETE {
@@ -86,7 +87,6 @@ async function handleChangedSubjects(subjects: string[]) {
 }
 
 async function handleDelta(req: Request, res: Response) {
-  console.log('incoming delta');
   const changeSets: Changeset[] = req.body;
   const filteredChangeSets = await filterDeltas(changeSets);
   const subjects = new Set<string>();
@@ -95,7 +95,6 @@ async function handleDelta(req: Request, res: Response) {
     changeSet.deletes.forEach((quad) => subjects.add(quad.subject.value));
   });
   await handleChangedSubjects([...subjects]);
-  console.log('handled delta');
 
   res.status(201).send();
 }
@@ -111,3 +110,59 @@ const errorHandler: ErrorRequestHandler = function (err, _req, res, _next) {
 };
 
 app.use(errorHandler);
+
+let cleanupRunning = false;
+const cleanupDuplicateModifieds = async () => {
+  if (cleanupRunning) {
+    return;
+  }
+  cleanupRunning = true;
+
+  let interestingTypesFilter = '';
+  if (interestingTypesSet.size > 0) {
+    const safeInterestingTypesValues = Array.from(interestingTypesSet)
+      .map(sparqlEscapeUri)
+      .join('\n');
+    interestingTypesFilter = `?subject a ?type .
+      VALUES ?type {
+        ${safeInterestingTypesValues}
+      }`;
+  }
+
+  await update(`
+    PREFIX dct: <http://purl.org/dc/terms/>
+
+    DELETE {
+      GRAPH ?g {
+        ?subject dct:modified ?older .
+      }
+    }
+    WHERE {
+      GRAPH ?g {
+        ?subject dct:modified ?older .
+        ?subject dct:modified ?newer .
+        FILTER(?older < ?newer)
+
+        ${interestingTypesFilter}
+      }
+
+      ${filterModifiedSubjects}
+    }
+  `);
+
+  cleanupRunning = false;
+};
+
+if (process.env.CLEANUP_DUPLICATES_CRON) {
+  const cronjob = CronJob.from({
+    cronTime: process.env.CLEANUP_DUPLICATES_CRON,
+    onTick: async () => {
+      await cleanupDuplicateModifieds();
+    },
+  });
+  cronjob.start();
+}
+
+if (process.env.CLEANUP_DUPLICATES_AT_START == 'true') {
+  cleanupDuplicateModifieds();
+}
