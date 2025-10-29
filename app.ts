@@ -137,14 +137,21 @@ const cleanupDuplicateModifieds = async () => {
         ?subject dct:modified ?older .
       }
     }
+    INSERT {
+      GRAPH ?g {
+        ?subject dct:modified ?newer .
+      }
+    }
     WHERE {
       GRAPH ?g {
         ?subject dct:modified ?older .
-        ?subject dct:modified ?newer .
-        FILTER(?older < ?newer)
-
         ${interestingTypesFilter}
       }
+      GRAPH ?h {
+        ?subject dct:modified ?newer .
+      }
+      FILTER(?older < ?newer)
+
 
       ${filterModifiedSubjects}
     }
