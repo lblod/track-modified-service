@@ -1,6 +1,6 @@
 {
   "name": "track-modified-service",
-  "version": "0.0.0",
+  "version": "0.2.0",
   "description": "Service to set the dct:modified for concepts based on incoming deltas",
   "main": "app.js",
   "author": "redpencil.io",
